@@ -43,7 +43,18 @@ struct Question {
 #[derive(Debug, Serialize, Deserialize, Eq, Hash, Clone, PartialEq)]
 struct QuestionId(String);
 
-async fn get_questions(store: Store) -> Result<impl warp::Reply, warp::Rejection> {
+async fn get_questions(
+    params: HashMap<String, String>,
+    store: Store,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    println!("{:?}", params);
+    let mut start = 0;
+
+    if let Some(n) = params.get("start") {
+        start = n.parse::<usize>().expect("could not parse start parameter");
+    }
+    println!("start: {:?}", start);
+
     let res: Vec<Question> = store.questions.values().cloned().collect();
     Ok(warp::reply::json(&res))
 }
@@ -66,15 +77,18 @@ async fn return_error(r: Rejection) -> Result<impl Reply, Rejection> {
 async fn main() {
     let store = Store::new();
     let store_filter = warp::any().map(move || store.clone());
-    let cors = warp::cors()
-        .allow_any_origin()
-        .allow_header("not-in-the-request")
-        .allow_methods(&[Method::PUT, Method::DELETE, Method::GET, Method::POST]);
+    let cors = warp::cors().allow_any_origin().allow_methods(&[
+        Method::PUT,
+        Method::DELETE,
+        Method::GET,
+        Method::POST,
+    ]);
 
     let get_items = warp::get()
         .and(warp::path("questions"))
         .and(warp::path::end())
-        .and(store_filter)
+        .and(warp::query::<HashMap<String, String>>())
+        .and(store_filter.clone())
         .and_then(get_questions)
         .recover(return_error);
 
