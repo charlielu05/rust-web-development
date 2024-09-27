@@ -1,62 +1,58 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::hash::Hash;
 use std::io::{Error, ErrorKind};
 use std::str::FromStr;
 use tokio;
 use warp;
-use warp::{http::StatusCode, reject::Reject, Filter, Rejection, Reply};
+use warp::{
+    filters::cors::CorsForbidden, http::Method, http::StatusCode, reject::Reject, Filter,
+    Rejection, Reply,
+};
 
-#[derive(Debug)]
-struct InValidId;
-impl Reject for InValidId {}
+#[derive(Clone)]
+struct Store {
+    questions: HashMap<QuestionId, Question>,
+}
+impl Store {
+    fn new() -> Self {
+        Store {
+            questions: Self::init(),
+        }
+    }
 
-#[derive(Debug, Serialize)]
+    fn init() -> HashMap<QuestionId, Question> {
+        let file = include_str!("../questions.json");
+        serde_json::from_str(file).expect("can't read questions.json")
+    }
+
+    fn add_question(mut self, question: Question) -> Self {
+        self.questions.insert(question.id.clone(), question);
+        self
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct Question {
     id: QuestionId,
     title: String,
     content: String,
     tags: Option<Vec<String>>,
 }
-impl Question {
-    fn new(id: QuestionId, title: String, content: String, tags: Option<Vec<String>>) -> Self {
-        Self {
-            id,
-            title,
-            content,
-            tags,
-        }
-    }
-}
-#[derive(Debug, Serialize)]
+
+#[derive(Debug, Serialize, Deserialize, Eq, Hash, Clone, PartialEq)]
 struct QuestionId(String);
-impl FromStr for QuestionId {
-    type Err = std::io::Error;
 
-    fn from_str(id: &str) -> Result<Self, Self::Err> {
-        match id.is_empty() {
-            false => Ok(QuestionId(id.to_string())),
-            true => Err(Error::new(ErrorKind::InvalidInput, "No id provided")),
-        }
-    }
-}
-async fn get_questions() -> Result<impl warp::Reply, warp::Rejection> {
-    let question = Question::new(
-        QuestionId::from_str("1").expect("No id provided"),
-        "First Question".to_string(),
-        "Content of question".to_string(),
-        Some(vec!["faq".to_string()]),
-    );
-
-    match question.id.0.parse::<i32>() {
-        Err(_) => Err(warp::reject::custom(InValidId)),
-        Ok(_) => Ok(warp::reply::json(&question)),
-    }
+async fn get_questions(store: Store) -> Result<impl warp::Reply, warp::Rejection> {
+    let res: Vec<Question> = store.questions.values().cloned().collect();
+    Ok(warp::reply::json(&res))
 }
 
 async fn return_error(r: Rejection) -> Result<impl Reply, Rejection> {
-    if let Some(_InvalidId) = r.find::<Rejection>() {
+    if let Some(error) = r.find::<CorsForbidden>() {
         Ok(warp::reply::with_status(
-            "No valid ID presented",
-            StatusCode::UNPROCESSABLE_ENTITY,
+            "CORS Forbidden",
+            StatusCode::FORBIDDEN,
         ))
     } else {
         Ok(warp::reply::with_status(
@@ -68,13 +64,21 @@ async fn return_error(r: Rejection) -> Result<impl Reply, Rejection> {
 
 #[tokio::main]
 async fn main() {
+    let store = Store::new();
+    let store_filter = warp::any().map(move || store.clone());
+    let cors = warp::cors()
+        .allow_any_origin()
+        .allow_header("not-in-the-request")
+        .allow_methods(&[Method::PUT, Method::DELETE, Method::GET, Method::POST]);
+
     let get_items = warp::get()
         .and(warp::path("questions"))
         .and(warp::path::end())
+        .and(store_filter)
         .and_then(get_questions)
         .recover(return_error);
 
-    let routes = get_items;
+    let routes = get_items.with(cors);
 
     warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 }
