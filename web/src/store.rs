@@ -2,7 +2,7 @@ use crate::types::answer::{Answer, AnswerId};
 use crate::types::question::{Question, QuestionId};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Store {
     pub questions: Arc<RwLock<HashMap<QuestionId, Question>>>,
     pub answers: Arc<RwLock<HashMap<AnswerId, Answer>>>,
